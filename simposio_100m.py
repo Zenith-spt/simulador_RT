@@ -6,7 +6,7 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Simposio tiempo de reacción", page_icon="⏱️", layout="centered")
 
-# PIN de seguridad para acciones de gestión (puedes cambiarlo aquí o en st.secrets)
+# PIN de seguridad para acciones de gestión
 try:
     PIN_ORGANIZADOR = st.secrets["pin_organizador"]
 except Exception:
@@ -21,6 +21,9 @@ def obtener_base_datos():
 
 db_global = obtener_base_datos()
 
+# Estados locales independientes por cada usuario/dispositivo
+if "historial_personal" not in st.session_state:
+    st.session_state.historial_personal = []
 if "ultimo_id_enviado" not in st.session_state:
     st.session_state.ultimo_id_enviado = None
 if "modo_organizador" not in st.session_state:
@@ -29,10 +32,14 @@ if "modo_organizador" not in st.session_state:
 st.title("Simposio tiempo de reacción")
 st.caption("Práctica experimental: Tiempo de reacción auditivo y visual")
 
-tab_test, tab_ranking = st.tabs(["📱 Realizar Prueba (Móvil)", "🏆 Rankings y Hoja de Cálculo"])
+tab_test, tab_personal, tab_ranking = st.tabs([
+    "📱 Realizar Prueba",
+    "📈 Informe Personal",
+    "🏆 Rankings y Hoja de Cálculo",
+])
 
 # ==============================================================================
-# PESTAÑA 1: PRUEBA EN EL MÓVIL (CAPTURA AUTOMÁTICA)
+# PANTALLA 1: REALIZAR PRUEBA (MÓVIL)
 # ==============================================================================
 with tab_test:
     c1, c2 = st.columns(2)
@@ -168,7 +175,7 @@ with tab_test:
                     box.style.backgroundColor = '#0284c7';
                     box.style.border = 'none';
                     titulo.innerText = tr + ' ms';
-                    sub.innerText = 'Marca capturada. Pulsa el botón de abajo para enviarla o toca aquí para repetir.';
+                    sub.innerText = 'Marca capturada. Pulsa el botón de abajo para registrarla o toca aquí para repetir.';
                     enviarMarcaAPython(tr, esAuditivo ? 'Auditivo' : 'Visual');
                 }}
             }});
@@ -196,29 +203,124 @@ with tab_test:
                     st.caption("⚠️ *Nota: < 100 ms se considera salida nula en World Athletics.*")
             with col_btn:
                 if not ya_enviada:
-                    if st.button(f"📤 Enviar {ms_val} ms", type="primary", use_container_width=True):
+                    if st.button(f"📤 Registrar {ms_val} ms", type="primary", use_container_width=True):
                         nombre_final = participante.strip() if participante.strip() else "Anónimo"
-                        db_global.append({
+                        registro = {
+                            "Intento": len(st.session_state.historial_personal) + 1,
                             "Hora": datetime.now().strftime("%H:%M:%S"),
                             "Participante": nombre_final,
                             "Prueba": tr_tipo_param,
                             "Tiempo (ms)": ms_val,
-                        })
+                            "Válido (>=100ms)": "Sí" if ms_val >= 100 else "No (Anticipación)",
+                        }
+                        # Guardar en informe individual y en base de datos global
+                        st.session_state.historial_personal.append(registro)
+                        db_global.append(registro)
                         st.session_state.ultimo_id_enviado = tr_id_param
-                        st.success("✅ ¡Marca registrada en el ranking!")
+                        st.success("✅ ¡Marca guardada en tu informe y enviada al ranking!")
                         st.rerun()
                 else:
-                    st.button("✔️ Marca enviada", disabled=True, use_container_width=True)
+                    st.button("✔️ Marca registrada", disabled=True, use_container_width=True)
         except ValueError:
             pass
 
 # ==============================================================================
-# PESTAÑA 2: RANKINGS SEPARADOS Y EXPORTACIÓN A HOJA DE CÁLCULO
+# PANTALLA 2: INFORME PERSONAL Y ANÁLISIS DESCRIPTIVO BÁSICO
+# ==============================================================================
+with tab_personal:
+    st.subheader("📈 Tu Informe Individual de Rendimiento")
+
+    if not st.session_state.historial_personal:
+        st.info("Aún no has registrado ninguna marca. Realiza al menos una prueba en la primera pestaña.")
+    else:
+        df_ind = pd.DataFrame(st.session_state.historial_personal)
+        nombre_usuario = df_ind["Participante"].iloc[-1]
+        st.markdown(f"**Participante:** `{nombre_usuario}` | **Total de intentos registrados:** `{len(df_ind)}`")
+
+        # Filtrar intentos válidos (>= 100 ms) para estadística descriptiva limpia
+        df_ind_val = df_ind[df_ind["Tiempo (ms)"] >= 100]
+        aud_ind = df_ind_val[df_ind_val["Prueba"] == "Auditivo"]["Tiempo (ms)"]
+        vis_ind = df_ind_val[df_ind_val["Prueba"] == "Visual"]["Tiempo (ms)"]
+
+        st.markdown("### 📊 Análisis Descriptivo Básico (Intentos válidos ≥ 100 ms)")
+
+        def calcular_descriptivos(serie):
+            if serie.empty:
+                return ["-", "-", "-", "-", "-", "-", 0]
+            media = f"{serie.mean():.1f}"
+            de = f"{serie.std():.1f}" if len(serie) > 1 else "0.0"
+            mediana = f"{serie.median():.1f}"
+            mejor = f"{serie.min():.1f}"
+            peor = f"{serie.max():.1f}"
+            rango = f"{(serie.max() - serie.min()):.1f}"
+            n = len(serie)
+            return [n, media, de, mediana, mejor, peor, rango]
+
+        tabla_desc = pd.DataFrame({
+            "Estadístico": [
+                "N (Intentos válidos)",
+                "Media (ms)",
+                "Desviación Estándar (ms)",
+                "Mediana (ms)",
+                "Mejor Marca / Mínimo (ms)",
+                "Peor Marca / Máximo (ms)",
+                "Rango (ms)",
+            ],
+            "🔊 Auditivo": calcular_descriptivos(aud_ind),
+            "🟢 Visual": calcular_descriptivos(vis_ind),
+        })
+
+        st.dataframe(tabla_desc, hide_index=True, use_container_width=True)
+
+        # Comparativa fisiológica individual si tiene ambas modalidades
+        if not aud_ind.empty and not vis_ind.empty:
+            diff_ind = vis_ind.mean() - aud_ind.mean()
+            if diff_ind > 0:
+                st.success(
+                    f"💡 **Tu perfil fisiológico:** Tu tiempo de reacción auditivo medio es **{diff_ind:.1f} ms más rápido** que tu tiempo visual."
+                )
+            else:
+                st.info(
+                    f"💡 **Tu perfil fisiológico:** Tu tiempo visual medio ha sido **{abs(diff_ind):.1f} ms más rápido** que el auditivo en esta serie."
+                )
+
+        st.divider()
+
+        st.markdown("### 📋 Registro Completo de Tus Intentos")
+        st.dataframe(
+            df_ind[["Intento", "Hora", "Prueba", "Tiempo (ms)", "Válido (>=100ms)"]],
+            hide_index=True,
+            use_container_width=True,
+        )
+
+        # Descarga del informe individual en Excel
+        buffer_ind = io.BytesIO()
+        with pd.ExcelWriter(buffer_ind, engine="openpyxl") as writer:
+            tabla_desc.to_excel(writer, sheet_name="Analisis_Descriptivo", index=False)
+            df_ind.to_excel(writer, sheet_name="Mis_Intentos", index=False)
+
+        col_ind1, col_ind2 = st.columns(2)
+        with col_ind1:
+            st.download_button(
+                label="📥 Descargar mi informe (.xlsx)",
+                data=buffer_ind.getvalue(),
+                file_name=f"Informe_TR_{nombre_usuario.replace(' ', '_')}_{datetime.now().strftime('%H%M')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+            )
+        with col_ind2:
+            if st.button("🔄 Reiniciar mi historial personal", use_container_width=True):
+                st.session_state.historial_personal = []
+                st.rerun()
+
+# ==============================================================================
+# PANTALLA 3: RANKINGS (MEJOR MARCA POR SUJETO) Y HOJA DE CÁLCULO GLOBAL
 # ==============================================================================
 with tab_ranking:
     col_t, col_ref = st.columns([3, 1])
     with col_t:
-        st.subheader("Clasificación en Tiempo Real")
+        st.subheader("Clasificación General (Mejor Marca por Sujeto)")
     with col_ref:
         if st.button("🔄 Actualizar", use_container_width=True):
             st.rerun()
@@ -228,13 +330,36 @@ with tab_ranking:
     else:
         df = pd.DataFrame(db_global)
 
-        df_aud = df[df["Prueba"] == "Auditivo"].sort_values(by="Tiempo (ms)").reset_index(drop=True)
-        df_vis = df[df["Prueba"] == "Visual"].sort_values(by="Tiempo (ms)").reset_index(drop=True)
+        # Filtrar intentos válidos (>= 100 ms) para los rankings oficiales
+        df_validos = df[df["Tiempo (ms)"] >= 100].copy()
+
+        # Obtener ÚNICAMENTE la mejor marca (mínimo tiempo) por participante en cada modalidad
+        if not df_validos[df_validos["Prueba"] == "Auditivo"].empty:
+            df_aud_best = (
+                df_validos[df_validos["Prueba"] == "Auditivo"]
+                .groupby("Participante", as_index=False)["Tiempo (ms)"]
+                .min()
+                .sort_values(by="Tiempo (ms)")
+                .reset_index(drop=True)
+            )
+        else:
+            df_aud_best = pd.DataFrame(columns=["Participante", "Tiempo (ms)"])
+
+        if not df_validos[df_validos["Prueba"] == "Visual"].empty:
+            df_vis_best = (
+                df_validos[df_validos["Prueba"] == "Visual"]
+                .groupby("Participante", as_index=False)["Tiempo (ms)"]
+                .min()
+                .sort_values(by="Tiempo (ms)")
+                .reset_index(drop=True)
+            )
+        else:
+            df_vis_best = pd.DataFrame(columns=["Participante", "Tiempo (ms)"])
 
         m1, m2, m3 = st.columns(3)
-        m1.metric("Participaciones", len(df))
-        m2.metric("Media Auditiva", f"{df_aud['Tiempo (ms)'].mean():.1f} ms" if not df_aud.empty else "-")
-        m3.metric("Media Visual", f"{df_vis['Tiempo (ms)'].mean():.1f} ms" if not df_vis.empty else "-")
+        m1.metric("Sujetos únicos", df["Participante"].nunique())
+        m2.metric("Media Mejores Auditivo", f"{df_aud_best['Tiempo (ms)'].mean():.1f} ms" if not df_aud_best.empty else "-")
+        m3.metric("Media Mejores Visual", f"{df_vis_best['Tiempo (ms)'].mean():.1f} ms" if not df_vis_best.empty else "-")
 
         st.divider()
 
@@ -242,35 +367,37 @@ with tab_ranking:
 
         with col_r1:
             st.markdown("### 🔊 Ranking Auditivo")
-            if df_aud.empty:
-                st.caption("Sin registros auditivos aún.")
+            st.caption("Mejor marca válida (≥ 100 ms) por participante")
+            if df_aud_best.empty:
+                st.info("Sin registros válidos aún.")
             else:
-                df_aud.index = df_aud.index + 1
-                st.dataframe(df_aud[["Participante", "Tiempo (ms)"]], use_container_width=True)
+                df_aud_best.index = df_aud_best.index + 1
+                st.dataframe(df_aud_best, use_container_width=True)
 
         with col_r2:
             st.markdown("### 🟢 Ranking Visual")
-            if df_vis.empty:
-                st.caption("Sin registros visuales aún.")
+            st.caption("Mejor marca válida (≥ 100 ms) por participante")
+            if df_vis_best.empty:
+                st.info("Sin registros válidos aún.")
             else:
-                df_vis.index = df_vis.index + 1
-                st.dataframe(df_vis[["Participante", "Tiempo (ms)"]], use_container_width=True)
+                df_vis_best.index = df_vis_best.index + 1
+                st.dataframe(df_vis_best, use_container_width=True)
 
         st.divider()
 
-        st.markdown("### 📥 Exportar a Hoja de Cálculo")
+        st.markdown("### 📥 Exportar Base de Datos Global")
         buffer_excel = io.BytesIO()
         with pd.ExcelWriter(buffer_excel, engine="openpyxl") as writer:
-            df.to_excel(writer, sheet_name="Todos_los_datos", index=False)
-            if not df_aud.empty:
-                df_aud.to_excel(writer, sheet_name="Ranking_Auditivo", index_label="Posición")
-            if not df_vis.empty:
-                df_vis.to_excel(writer, sheet_name="Ranking_Visual", index_label="Posición")
+            df.to_excel(writer, sheet_name="Todos_los_intentos", index=False)
+            if not df_aud_best.empty:
+                df_aud_best.to_excel(writer, sheet_name="Ranking_Mejor_Auditivo", index_label="Posición")
+            if not df_vis_best.empty:
+                df_vis_best.to_excel(writer, sheet_name="Ranking_Mejor_Visual", index_label="Posición")
 
         st.download_button(
-            label="📊 Descargar Excel (.xlsx)",
+            label="📊 Descargar Excel General (.xlsx)",
             data=buffer_excel.getvalue(),
-            file_name=f"Resultados_Simposio_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            file_name=f"Resultados_Simposio_TR_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
             use_container_width=True,
@@ -292,7 +419,7 @@ with tab_ranking:
                 st.success("Modo organizador activo.")
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
-                    if st.button("🗑️ Limpiar todos los datos", type="primary", use_container_width=True):
+                    if st.button("🗑️ Limpiar base de datos global", type="primary", use_container_width=True):
                         db_global.clear()
                         st.rerun()
                 with col_b2:
