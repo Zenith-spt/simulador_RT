@@ -4,7 +4,10 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Simposio 100m - Tiempo de Reacción", page_icon="⏱️", layout="centered")
+st.set_page_config(page_title="Simposio tiempo de reacción", page_icon="⏱️", layout="centered")
+
+# PIN de seguridad para acciones de gestión (puedes cambiarlo aquí o en st.secrets)
+PIN_ORGANIZADOR = st.secrets.get("pin_organizador", "100m")
 
 
 # Almacenamiento global sincronizado entre todos los dispositivos conectados
@@ -17,9 +20,11 @@ db_global = obtener_base_datos()
 
 if "ultimo_id_enviado" not in st.session_state:
     st.session_state.ultimo_id_enviado = None
+if "modo_organizador" not in st.session_state:
+    st.session_state.modo_organizador = False
 
-st.title("⏱️ Simposio 100m: Tiempo de Reacción")
-st.caption("Práctica experimental: Estímulo Auditivo vs. Estímulo Visual")
+st.title("Simposio tiempo de reacción")
+st.caption("Práctica experimental: Tiempo de reacción auditivo y visual")
 
 tab_test, tab_ranking = st.tabs(["📱 Realizar Prueba (Móvil)", "🏆 Rankings y Hoja de Cálculo"])
 
@@ -111,7 +116,6 @@ with tab_test:
                     parentUrl.searchParams.set('tr_tipo', tipo);
                     parentUrl.searchParams.set('tr_id', idUnico);
                     window.parent.history.replaceState({{}}, '', parentUrl.toString());
-                    // Notificar a Streamlit del cambio en la URL
                     window.parent.dispatchEvent(new PopStateEvent('popstate'));
                 }} catch (e) {{
                     console.log("No se pudo actualizar URL padre:", e);
@@ -172,7 +176,6 @@ with tab_test:
 
     components.html(html_test, height=265)
 
-    # Leer marca capturada automáticamente desde los parámetros de la URL
     tr_ms_param = st.query_params.get("tr_ms")
     tr_tipo_param = st.query_params.get("tr_tipo")
     tr_id_param = st.query_params.get("tr_id")
@@ -261,17 +264,35 @@ with tab_ranking:
             if not df_vis.empty:
                 df_vis.to_excel(writer, sheet_name="Ranking_Visual", index_label="Posición")
 
-        col_dl1, col_dl2 = st.columns(2)
-        with col_dl1:
-            st.download_button(
-                label="📊 Descargar Excel (.xlsx)",
-                data=buffer_excel.getvalue(),
-                file_name=f"Resultados_Simposio_100m_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary",
-                use_container_width=True,
-            )
-        with col_dl2:
-            if st.button("🗑️ Limpiar todos los datos", use_container_width=True):
-                db_global.clear()
-                st.rerun()
+        st.download_button(
+            label="📊 Descargar Excel (.xlsx)",
+            data=buffer_excel.getvalue(),
+            file_name=f"Resultados_Simposio_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True,
+        )
+
+        st.divider()
+
+        # Control de borrado restringido al organizador
+        with st.expander("🔒 Administración de datos (Solo organizador)"):
+            if not st.session_state.modo_organizador:
+                pin_introducido = st.text_input("Introduce el PIN de organizador:", type="password", key="pin_input")
+                if st.button("🔓 Desbloquear gestión"):
+                    if pin_introducido == PIN_ORGANIZADOR:
+                        st.session_state.modo_organizador = True
+                        st.rerun()
+                    else:
+                        st.error("PIN incorrecto.")
+            else:
+                st.success("Modo organizador activo.")
+                col_b1, col_b2 = st.columns(2)
+                with col_b1:
+                    if st.button("🗑️ Limpiar todos los datos", type="primary", use_container_width=True):
+                        db_global.clear()
+                        st.rerun()
+                with col_b2:
+                    if st.button("🔒 Bloquear", use_container_width=True):
+                        st.session_state.modo_organizador = False
+                        st.rerun()
