@@ -7,7 +7,10 @@ import streamlit.components.v1 as components
 st.set_page_config(page_title="Simposio tiempo de reacción", page_icon="⏱️", layout="centered")
 
 # PIN de seguridad para acciones de gestión (puedes cambiarlo aquí o en st.secrets)
-PIN_ORGANIZADOR = st.secrets.get("pin_organizador", "100m")
+try:
+    PIN_ORGANIZADOR = st.secrets["pin_organizador"]
+except Exception:
+    PIN_ORGANIZADOR = "100m"
 
 
 # Almacenamiento global sincronizado entre todos los dispositivos conectados
