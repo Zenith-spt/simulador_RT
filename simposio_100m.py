@@ -99,23 +99,40 @@ with tab_test:
                     const AudioContext = window.AudioContext || window.webkitAudioContext;
                     if (AudioContext) audioCtx = new AudioContext();
                 }}
-                if (audioCtx && audioCtx.state === 'suspended') {{
-                    audioCtx.resume();
+                if (audioCtx) {{
+                    if (audioCtx.state === 'suspended') {{
+                        audioCtx.resume();
+                    }}
+                    try {{
+                        const buffer = audioCtx.createBuffer(1, 1, 22050);
+                        const source = audioCtx.createBufferSource();
+                        source.buffer = buffer;
+                        source.connect(audioCtx.destination);
+                        source.start(0);
+                    }} catch (e) {{}}
                 }}
             }}
 
             function beep() {{
+                initAudio();
                 if (!audioCtx) return;
+
+                const ahora = audioCtx.currentTime;
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(1000, audioCtx.currentTime);
-                gain.gain.setValueAtTime(0.8, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(1000, ahora);
+
+                gain.gain.setValueAtTime(0.001, ahora);
+                gain.gain.exponentialRampToValueAtTime(0.9, ahora + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.001, ahora + 0.22);
+
                 osc.connect(gain);
                 gain.connect(audioCtx.destination);
-                osc.start();
-                osc.stop(audioCtx.currentTime + 0.15);
+
+                osc.start(ahora);
+                osc.stop(ahora + 0.23);
             }}
 
             function enviarMarcaAPython(ms, tipo) {{
@@ -146,6 +163,7 @@ with tab_test:
                     const espera = Math.floor(Math.random() * 2300) + 1500;
                     timer = setTimeout(() => {{
                         estado = 'estimulo';
+                        tInicio = performance.now();
                         if (esAuditivo) {{
                             beep();
                             box.style.backgroundColor = '#1e293b';
@@ -158,7 +176,6 @@ with tab_test:
                             titulo.innerText = '🟢 ¡YA!';
                             sub.innerText = '¡TOCA AHORA!';
                         }}
-                        tInicio = performance.now();
                     }}, espera);
 
                 }} else if (estado === 'esperando') {{
@@ -213,7 +230,6 @@ with tab_test:
                             "Tiempo (ms)": ms_val,
                             "Válido (>=100ms)": "Sí" if ms_val >= 100 else "No (Anticipación)",
                         }
-                        # Guardar en informe individual y en base de datos global
                         st.session_state.historial_personal.append(registro)
                         db_global.append(registro)
                         st.session_state.ultimo_id_enviado = tr_id_param
@@ -237,7 +253,6 @@ with tab_personal:
         nombre_usuario = df_ind["Participante"].iloc[-1]
         st.markdown(f"**Participante:** `{nombre_usuario}` | **Total de intentos registrados:** `{len(df_ind)}`")
 
-        # Filtrar intentos válidos (>= 100 ms) para estadística descriptiva limpia
         df_ind_val = df_ind[df_ind["Tiempo (ms)"] >= 100]
         aud_ind = df_ind_val[df_ind_val["Prueba"] == "Auditivo"]["Tiempo (ms)"]
         vis_ind = df_ind_val[df_ind_val["Prueba"] == "Visual"]["Tiempo (ms)"]
@@ -272,7 +287,6 @@ with tab_personal:
 
         st.dataframe(tabla_desc, hide_index=True, use_container_width=True)
 
-        # Comparativa fisiológica individual si tiene ambas modalidades
         if not aud_ind.empty and not vis_ind.empty:
             diff_ind = vis_ind.mean() - aud_ind.mean()
             if diff_ind > 0:
@@ -293,7 +307,6 @@ with tab_personal:
             use_container_width=True,
         )
 
-        # Descarga del informe individual en Excel
         buffer_ind = io.BytesIO()
         with pd.ExcelWriter(buffer_ind, engine="openpyxl") as writer:
             tabla_desc.to_excel(writer, sheet_name="Analisis_Descriptivo", index=False)
@@ -330,10 +343,8 @@ with tab_ranking:
     else:
         df = pd.DataFrame(db_global)
 
-        # Filtrar intentos válidos (>= 100 ms) para los rankings oficiales
         df_validos = df[df["Tiempo (ms)"] >= 100].copy()
 
-        # Obtener ÚNICAMENTE la mejor marca (mínimo tiempo) por participante en cada modalidad
         if not df_validos[df_validos["Prueba"] == "Auditivo"].empty:
             df_aud_best = (
                 df_validos[df_validos["Prueba"] == "Auditivo"]
@@ -405,7 +416,6 @@ with tab_ranking:
 
         st.divider()
 
-        # Control de borrado restringido al organizador
         with st.expander("🔒 Administración de datos (Solo organizador)"):
             if not st.session_state.modo_organizador:
                 pin_introducido = st.text_input("Introduce el PIN de organizador:", type="password", key="pin_input")
